@@ -1,0 +1,1 @@
+HAND_LEFT(mcp1=30, mcp2=0, mcp3=15, mcp4=10, mcp5=0, pip1=35, pip2=45, pip3=70, pip4=50, pip5=30)

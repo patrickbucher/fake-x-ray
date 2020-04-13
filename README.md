@@ -49,5 +49,5 @@ Open [Admin UI](http://localhost:15672/) with username `guest` and password `gue
 ### Example
 
 ```bash
-$ curl -X POST localhost:8080/score -d @example.json
+$ curl -X POST localhost:8080/score -d @example.txt
 ```
