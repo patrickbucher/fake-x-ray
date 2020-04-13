@@ -31,3 +31,23 @@ Which should yield the following result:
   "pip5": 30
 }
 ```
+
+## How To
+
+### Setup
+
+On Arch Linux:
+
+```bash
+$ sudo pacman -S rabbitmq rabbitmqadmin
+$ sudo systemctl start rabbitmq
+$ rabbitmq-plugins enable rabbitmq_management
+```
+
+Open [Admin UI](http://localhost:15672/) with username `guest` and password `guest`.
+
+### Example
+
+```bash
+$ curl -X POST localhost:8080/score -d @example.json
+```
