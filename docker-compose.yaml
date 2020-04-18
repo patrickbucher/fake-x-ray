@@ -27,3 +27,9 @@ services:
       AMQP_URI: 'rabbitmq'
     links:
       - rabbitmq
+  ratingen_score:
+    build: ratingen_score
+    environment:
+      AMQP_URI: 'rabbitmq'
+    links:
+      - rabbitmq
