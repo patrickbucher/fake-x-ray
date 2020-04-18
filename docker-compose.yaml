@@ -15,3 +15,9 @@ services:
       HTTP_URI: '0.0.0.0:8080'
     links:
       - rabbitmq
+  body_part:
+    build: body_part
+    environment:
+      AMQP_URI: 'rabbitmq'
+    links:
+      - rabbitmq

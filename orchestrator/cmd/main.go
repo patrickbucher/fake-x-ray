@@ -112,6 +112,7 @@ func mustConnect(amqpURI string, maxRetries int, retryAfter time.Duration) *amqp
 	var err error
 	for !connected && retries < maxRetries {
 		conn, err = amqp.Dial(amqpURI)
+		retries++
 		if err != nil {
 			log.Printf("unable to connect to RabbitMQ on '%s', waiting...", amqpURI)
 			time.Sleep(retryAfter)
