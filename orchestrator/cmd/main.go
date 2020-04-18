@@ -16,6 +16,21 @@ import (
 const maxRetries = 10
 const retryAfter = 2 * time.Second
 
+var bodyPartJoints = map[string][]string{
+	"HAND_LEFT": []string{
+		"mcp1",
+		"mcp2",
+		"mcp3",
+		"mcp4",
+		"mcp5",
+		"pip1",
+		"pip2",
+		"pip3",
+		"pip4",
+		"pip5",
+	},
+}
+
 func main() {
 	amqpURI, httpURI := mustProvideEnvVars()
 	conn := mustConnect(amqpURI, maxRetries, retryAfter)
@@ -81,46 +96,33 @@ func main() {
 
 		result := <-ch
 
-		if result != "HAND_LEFT" {
-			w.Write([]byte("payload does not denote a left hand\n"))
+		joints, ok := bodyPartJoints[result]
+
+		if !ok {
+			w.Write([]byte("payload does not denote a known body part\n"))
 			return
 		}
 
-		mcpJointDetectionRequest := JointDetectionRequest{
-			RawData: payload.String(),
-			JointNames: []string{
-				"mcp1", "mcp2", "mcp3", "mcp4", "mcp5",
-			},
-		}
-		pipJointDetectionRequest := JointDetectionRequest{
-			RawData: payload.String(),
-			JointNames: []string{
-				"pip1", "pip2", "pip3", "pip4", "pip5",
-			},
-		}
+		for _, joint := range joints {
+			jointDetectionRequest := JointDetectionRequest{
+				RawData:    payload.String(),
+				JointNames: []string{joint},
+			}
 
-		pipJointDetectionPayload, err := json.Marshal(mcpJointDetectionRequest)
-		failOn(err)
-		mcpJointDetectionPayload, err := json.Marshal(pipJointDetectionRequest)
-		failOn(err)
+			jointDetectionPayload, err := json.Marshal(jointDetectionRequest)
+			failOn(err)
 
-		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
-			ContentType:   "text/plain",
-			CorrelationId: corrId.String(),
-			ReplyTo:       jointDetectionQueue.Name,
-			Body:          mcpJointDetectionPayload,
-		})
-		failOn(err)
-		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
-			ContentType:   "text/plain",
-			CorrelationId: corrId.String(),
-			ReplyTo:       jointDetectionQueue.Name,
-			Body:          pipJointDetectionPayload,
-		})
-		failOn(err)
+			err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
+				ContentType:   "text/plain",
+				CorrelationId: corrId.String(),
+				ReplyTo:       jointDetectionQueue.Name,
+				Body:          jointDetectionPayload,
+			})
+			failOn(err)
+		}
 
 		scores := make(map[string]int, 0)
-		for i := 0; i < len(mcpJointDetectionRequest.JointNames)+len(pipJointDetectionRequest.JointNames); i++ {
+		for i := 0; i < len(joints); i++ {
 			scoredJoint := <-ch
 			var jointScoreResponse JointScoreResponse
 			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)
