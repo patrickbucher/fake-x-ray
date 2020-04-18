@@ -21,3 +21,9 @@ services:
       AMQP_URI: 'rabbitmq'
     links:
       - rabbitmq
+  joint_detection:
+    build: joint_detection
+    environment:
+      AMQP_URI: 'rabbitmq'
+    links:
+      - rabbitmq

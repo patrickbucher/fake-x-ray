@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,35 +21,34 @@ func main() {
 	conn := mustConnect(amqpURI, maxRetries, retryAfter)
 	defer conn.Close()
 
-	ch, err := conn.Channel()
+	amqpChannel, err := conn.Channel()
 	failOn(err)
-	defer ch.Close()
+	defer amqpChannel.Close()
 
-	// make sure queue does exist, but do not use its channel
-	_, err = ch.QueueDeclare("body_part", false, false, false, false, nil)
+	// make sure these queues do exist, but do not use its channel
+	_, err = amqpChannel.QueueDeclare("body_part", false, false, false, false, nil)
+	failOn(err)
+	_, err = amqpChannel.QueueDeclare("joints", false, false, false, false, nil)
 	failOn(err)
 
-	q, err := ch.QueueDeclare("xrays", false, false, false, false, nil)
+	xrayQueue, err := amqpChannel.QueueDeclare("xrays", false, false, false, false, nil)
 	failOn(err)
 
-	deliveryChannel, err := ch.Consume("body_part", "", true, false, false, false, nil)
+	bodyPartDeliveryChannel, err := amqpChannel.Consume("body_part", "", true, false, false, false, nil)
+	failOn(err)
+
+	jointDetectionQueue, err := amqpChannel.QueueDeclare("joint_detection", false, false, false, false, nil)
+	failOn(err)
+
+	jointsDeliveryChannel, err := amqpChannel.Consume("joints", "", true, false, false, false, nil)
 	failOn(err)
 
 	semaphore := make(chan struct{}, 1)
 	requestChannels := make(map[string]chan string, 0)
 
-	go func(deliveries <-chan amqp.Delivery) {
-		for {
-			select {
-			case delivery := <-deliveries:
-				requestChannel, ok := requestChannels[delivery.CorrelationId]
-				if !ok {
-					log.Fatalf("unable to find request channel with correlation ID %s", delivery.CorrelationId)
-				}
-				requestChannel <- string(delivery.Body)
-			}
-		}
-	}(deliveryChannel)
+	// TODO: consider using a single func selecting from all the given channels
+	go gatherBodyParts(bodyPartDeliveryChannel, requestChannels)
+	go gatherJoints(jointsDeliveryChannel, requestChannels)
 
 	http.HandleFunc("/score", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("/score was called")
@@ -58,10 +58,10 @@ func main() {
 
 		corrId, err := uuid.NewRandom()
 		failOn(err)
-		err = ch.Publish("", "xrays", false, false, amqp.Publishing{
+		err = amqpChannel.Publish("", "xrays", false, false, amqp.Publishing{
 			ContentType:   "text/plain",
 			CorrelationId: corrId.String(),
-			ReplyTo:       q.Name,
+			ReplyTo:       xrayQueue.Name,
 			Body:          payload.Bytes(),
 		})
 		failOn(err)
@@ -71,13 +71,34 @@ func main() {
 		requestChannels[corrId.String()] = ch
 		<-semaphore
 
+		defer func() {
+			semaphore <- struct{}{}
+			delete(requestChannels, corrId.String())
+			<-semaphore
+		}()
+
 		result := <-ch
 
-		semaphore <- struct{}{}
-		delete(requestChannels, corrId.String())
-		<-semaphore
+		if result != "HAND_LEFT" {
+			w.Write([]byte("payload does not denote a left hand\n"))
+			return
+		}
 
-		w.Write([]byte(result))
+		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
+			ContentType:   "text/plain",
+			CorrelationId: corrId.String(),
+			ReplyTo:       jointDetectionQueue.Name,
+			Body:          payload.Bytes(),
+		})
+		failOn(err)
+
+		joints := make([]string, 0)
+		for i := 0; i < 10; i++ {
+			joint := <-ch
+			joints = append(joints, joint)
+		}
+		result = strings.Join(joints, " ")
+		w.Write([]byte(result + "\n"))
 	})
 
 	http.HandleFunc("/canary", func(w http.ResponseWriter, r *http.Request) {
@@ -125,4 +146,30 @@ func mustConnect(amqpURI string, maxRetries int, retryAfter time.Duration) *amqp
 		log.Fatalf("unable to connect to '%s' after %d retries", amqpURI, maxRetries)
 	}
 	return conn
+}
+
+func gatherBodyParts(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
+	for {
+		select {
+		case delivery := <-deliveries:
+			requestChannel, ok := requestChannels[delivery.CorrelationId]
+			if !ok {
+				log.Fatalf("unable to find request channel with correlation ID %s", delivery.CorrelationId)
+			}
+			requestChannel <- string(delivery.Body)
+		}
+	}
+}
+
+func gatherJoints(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
+	for {
+		select {
+		case delivery := <-deliveries:
+			requestChannel, ok := requestChannels[delivery.CorrelationId]
+			if !ok {
+				log.Fatalf("unable to find request channel with correlation ID %s", delivery.CorrelationId)
+			}
+			requestChannel <- string(delivery.Body)
+		}
+	}
 }
