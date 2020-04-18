@@ -90,7 +90,11 @@ func main() {
 
 		defer func() {
 			semaphore <- struct{}{}
-			delete(requestChannels, corrId.String())
+			channel, ok := requestChannels[corrId.String()]
+			if ok {
+				close(channel)
+				delete(requestChannels, corrId.String())
+			}
 			<-semaphore
 		}()
 
