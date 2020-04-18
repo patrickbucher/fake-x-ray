@@ -5,4 +5,4 @@ WORKDIR $WORKDIR
 COPY requirements.txt $WORKDIR
 RUN pip install -r requirements.txt
 COPY body_part.py $WORKDIR
-CMD ["python", "body_part.py"]
+CMD ["python", "-u", "body_part.py"]

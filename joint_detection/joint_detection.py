@@ -28,6 +28,7 @@ def main():
     if not connection:
         print(f'unable to connect to {amqp_uri} after {retries} retries')
         sys.exit(1)
+    print(f'connected to to {amqp_uri}')
 
     channel = connection.channel()
     channel.queue_declare(queue='joint_detection')
@@ -52,7 +53,6 @@ def callback(ch, method, props, body):
                 correlation_id=props.correlation_id),
             body=joint)
     ch.basic_ack(delivery_tag=method.delivery_tag)
-    print('ack')
 
 
 def detect_joints(body):
@@ -66,7 +66,6 @@ def detect_joints(body):
     detected_joints = []
     print('joint names', body['joint_names'])
     for s in segments:
-        print('segment', s)
         for joint in body['joint_names']:
             if s.startswith(joint):
                 joints.append(s)

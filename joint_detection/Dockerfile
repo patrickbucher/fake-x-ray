@@ -5,4 +5,4 @@ WORKDIR $WORKDIR
 COPY requirements.txt $WORKDIR
 RUN pip install -r requirements.txt
 COPY joint_detection.py $WORKDIR
-CMD ["python", "joint_detection.py"]
+CMD ["python", "-u", "joint_detection.py"]

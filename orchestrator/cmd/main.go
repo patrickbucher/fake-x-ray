@@ -86,26 +86,41 @@ func main() {
 			return
 		}
 
-		jointDetectionRequest := JointDetectionRequest{
+		mcpJointDetectionRequest := JointDetectionRequest{
 			RawData: payload.String(),
 			JointNames: []string{
 				"mcp1", "mcp2", "mcp3", "mcp4", "mcp5",
+			},
+		}
+		pipJointDetectionRequest := JointDetectionRequest{
+			RawData: payload.String(),
+			JointNames: []string{
 				"pip1", "pip2", "pip3", "pip4", "pip5",
 			},
 		}
-		jointDetectionPayload, err := json.Marshal(jointDetectionRequest)
+
+		pipJointDetectionPayload, err := json.Marshal(mcpJointDetectionRequest)
+		failOn(err)
+		mcpJointDetectionPayload, err := json.Marshal(pipJointDetectionRequest)
 		failOn(err)
 
 		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
 			ContentType:   "text/plain",
 			CorrelationId: corrId.String(),
 			ReplyTo:       jointDetectionQueue.Name,
-			Body:          jointDetectionPayload,
+			Body:          mcpJointDetectionPayload,
+		})
+		failOn(err)
+		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
+			ContentType:   "text/plain",
+			CorrelationId: corrId.String(),
+			ReplyTo:       jointDetectionQueue.Name,
+			Body:          pipJointDetectionPayload,
 		})
 		failOn(err)
 
 		scores := make(map[string]int, 0)
-		for i := 0; i < len(jointDetectionRequest.JointNames); i++ {
+		for i := 0; i < len(mcpJointDetectionRequest.JointNames)+len(pipJointDetectionRequest.JointNames); i++ {
 			scoredJoint := <-ch
 			var jointScoreResponse JointScoreResponse
 			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)

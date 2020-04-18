@@ -5,4 +5,4 @@ WORKDIR $WORKDIR
 COPY requirements.txt $WORKDIR
 RUN pip install -r requirements.txt
 COPY ratingen_score.py $WORKDIR
-CMD ["python", "ratingen_score.py"]
+CMD ["python", "-u", "ratingen_score.py"]

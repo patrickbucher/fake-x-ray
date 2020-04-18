@@ -42,6 +42,12 @@ Using Docker Compose:
 $ docker-compose up --build
 ```
 
+With multiple instances per model worker service:
+
+```bash
+$ docker-compose up --build --scale body_part=5 --scale joint_detection=5 --scale ratingen_score=5
+```
+
 ### Setup
 
 On Arch Linux:

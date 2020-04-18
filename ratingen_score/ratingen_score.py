@@ -28,6 +28,7 @@ def main():
     if not connection:
         print(f'unable to connect to {amqp_uri} after {retries} retries')
         sys.exit(1)
+    print(f'connected to to {amqp_uri}')
 
     channel = connection.channel()
     channel.queue_declare(queue='joints')
@@ -50,7 +51,6 @@ def callback(ch, method, props, body):
             correlation_id=props.correlation_id),
         body=response)
     ch.basic_ack(delivery_tag=method.delivery_tag)
-    print('ack')
 
 
 def score_joint(body):
