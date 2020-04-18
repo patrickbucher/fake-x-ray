@@ -5,25 +5,32 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 	"github.com/streadway/amqp"
 )
 
+const maxRetries = 10
+const retryAfter = 2 * time.Second
+
 func main() {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOn(err)
+	amqpURI, httpURI := mustProvideEnvVars()
+	conn := mustConnect(amqpURI, maxRetries, retryAfter)
 	defer conn.Close()
 
 	ch, err := conn.Channel()
 	failOn(err)
 	defer ch.Close()
 
-	// TODO: think carefully about parameters
+	// make sure queue does exist, but do not use its channel
+	_, err = ch.QueueDeclare("body_part", false, false, false, false, nil)
+	failOn(err)
+
 	q, err := ch.QueueDeclare("xrays", false, false, false, false, nil)
 	failOn(err)
 
-	// TODO: think carefully about parameters
 	deliveryChannel, err := ch.Consume("body_part", "", true, false, false, false, nil)
 	failOn(err)
 
@@ -77,11 +84,44 @@ func main() {
 		w.Write([]byte("fake-x-ray orchestrator up and running"))
 	})
 
-	http.ListenAndServe("0.0.0.0:8080", nil)
+	http.ListenAndServe(httpURI, nil)
 }
 
 func failOn(err error) {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+}
+
+func mustProvideEnvVars() (amqpURI, httpURI string) {
+	amqpURI = os.Getenv("AMQP_URI")
+	if amqpURI == "" {
+		log.Fatalf("environment variable AMQP_URI not set")
+	}
+	httpURI = os.Getenv("HTTP_URI")
+	if httpURI == "" {
+		log.Fatalf("environment variable HTTP_URI not set")
+	}
+	return amqpURI, httpURI
+}
+
+func mustConnect(amqpURI string, maxRetries int, retryAfter time.Duration) *amqp.Connection {
+	connected := false
+	retries := 0
+	var conn *amqp.Connection
+	var err error
+	for !connected && retries < maxRetries {
+		conn, err = amqp.Dial(amqpURI)
+		if err != nil {
+			log.Printf("unable to connect to RabbitMQ on '%s', waiting...", amqpURI)
+			time.Sleep(retryAfter)
+			continue
+		} else {
+			connected = true
+		}
+	}
+	if !connected {
+		log.Fatalf("unable to connect to '%s' after %d retries", amqpURI, maxRetries)
+	}
+	return conn
 }
