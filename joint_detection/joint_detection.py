@@ -63,13 +63,18 @@ def detect_joints(body):
     segments = body['raw'][lower+1:upper].split(',')
     segments = [s.strip() for s in segments]
     joints = []
+    detected_joints = []
     print('joint names', body['joint_names'])
     for s in segments:
         print('segment', s)
         for joint in body['joint_names']:
             if s.startswith(joint):
                 joints.append(s)
+                detected_joints.append(joint)
                 break
+    undetected_joints = set(body['joint_names']) - set(detected_joints)
+    for undetected_joint in undetected_joints:
+        joints.append(f'{undetected_joint}=-1')
     return joints
 
 

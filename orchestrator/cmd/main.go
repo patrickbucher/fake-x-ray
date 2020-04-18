@@ -111,6 +111,9 @@ func main() {
 			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)
 			failOn(err)
 
+			if jointScoreResponse.RatingenScore == -1 {
+				continue
+			}
 			scores[jointScoreResponse.JointName] = jointScoreResponse.RatingenScore
 		}
 		clientResponsePayload, err := json.Marshal(scores)
