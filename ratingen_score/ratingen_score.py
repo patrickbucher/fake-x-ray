@@ -30,47 +30,36 @@ def main():
         sys.exit(1)
 
     channel = connection.channel()
-    channel.queue_declare(queue='joint_detection')
+    channel.queue_declare(queue='joints')
     channel.basic_qos(prefetch_count=1)
     channel.basic_consume(
-        queue='joint_detection',
+        queue='joints',
         on_message_callback=callback)
     channel.start_consuming()
 
 
 def callback(ch, method, props, body):
     print('task', body)
-    json_payload = body.decode('utf-8')
-    payload = json.loads(json_payload)
-    joints = detect_joints(payload)
-    print('joints', joints)
-    for joint in joints:
-        ch.basic_publish(
-            exchange='',
-            routing_key='joints',
-            properties=pika.BasicProperties(
-                correlation_id=props.correlation_id),
-            body=joint)
+    joint, score = score_joint(body.decode('utf-8'))
+    print('joint', joint, 'score', score)
+    response = json.dumps({'joint': joint, 'score': score})
+    ch.basic_publish(
+        exchange='',
+        routing_key='scores',
+        properties=pika.BasicProperties(
+            correlation_id=props.correlation_id),
+        body=response)
     ch.basic_ack(delivery_tag=method.delivery_tag)
     print('ack')
 
 
-def detect_joints(body):
-    lower = body['raw'].find('(')
-    upper = body['raw'].find(')')
-    if lower == -1 or upper == -1 or lower >= upper:
+def score_joint(body):
+    parts = body.split('=')
+    if len(parts) != 2:
         return ''
-    segments = body['raw'][lower+1:upper].split(',')
-    segments = [s.strip() for s in segments]
-    joints = []
-    print('joint names', body['joint_names'])
-    for s in segments:
-        print('segment', s)
-        for joint in body['joint_names']:
-            if s.startswith(joint):
-                joints.append(s)
-                break
-    return joints
+    joint = str(parts[0])
+    score = int(parts[1])
+    return joint, score
 
 
 if __name__ == '__main__':

@@ -2,11 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +30,8 @@ func main() {
 	failOn(err)
 	_, err = amqpChannel.QueueDeclare("joints", false, false, false, false, nil)
 	failOn(err)
+	_, err = amqpChannel.QueueDeclare("scores", false, false, false, false, nil)
+	failOn(err)
 
 	xrayQueue, err := amqpChannel.QueueDeclare("xrays", false, false, false, false, nil)
 	failOn(err)
@@ -40,7 +42,7 @@ func main() {
 	jointDetectionQueue, err := amqpChannel.QueueDeclare("joint_detection", false, false, false, false, nil)
 	failOn(err)
 
-	jointsDeliveryChannel, err := amqpChannel.Consume("joints", "", true, false, false, false, nil)
+	scoreDeliveryChannel, err := amqpChannel.Consume("scores", "", true, false, false, false, nil)
 	failOn(err)
 
 	semaphore := make(chan struct{}, 1)
@@ -48,7 +50,7 @@ func main() {
 
 	// TODO: consider using a single func selecting from all the given channels
 	go gatherBodyParts(bodyPartDeliveryChannel, requestChannels)
-	go gatherJoints(jointsDeliveryChannel, requestChannels)
+	go gatherScores(scoreDeliveryChannel, requestChannels)
 
 	http.HandleFunc("/score", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("/score was called")
@@ -84,21 +86,37 @@ func main() {
 			return
 		}
 
+		jointDetectionRequest := JointDetectionRequest{
+			RawData: payload.String(),
+			JointNames: []string{
+				"mcp1", "mcp2", "mcp3", "mcp4", "mcp5",
+				"pip1", "pip2", "pip3", "pip4", "pip5",
+			},
+		}
+		jointDetectionPayload, err := json.Marshal(jointDetectionRequest)
+		failOn(err)
+
 		err = amqpChannel.Publish("", "joint_detection", false, false, amqp.Publishing{
 			ContentType:   "text/plain",
 			CorrelationId: corrId.String(),
 			ReplyTo:       jointDetectionQueue.Name,
-			Body:          payload.Bytes(),
+			Body:          jointDetectionPayload,
 		})
 		failOn(err)
 
-		joints := make([]string, 0)
-		for i := 0; i < 10; i++ {
-			joint := <-ch
-			joints = append(joints, joint)
+		scores := make(map[string]int, 0)
+		for i := 0; i < len(jointDetectionRequest.JointNames); i++ {
+			scoredJoint := <-ch
+			var jointScoreResponse JointScoreResponse
+			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)
+			failOn(err)
+
+			scores[jointScoreResponse.JointName] = jointScoreResponse.RatingenScore
 		}
-		result = strings.Join(joints, " ")
-		w.Write([]byte(result + "\n"))
+		clientResponsePayload, err := json.Marshal(scores)
+		failOn(err)
+
+		w.Write(clientResponsePayload)
 	})
 
 	http.HandleFunc("/canary", func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +124,16 @@ func main() {
 	})
 
 	http.ListenAndServe(httpURI, nil)
+}
+
+type JointDetectionRequest struct {
+	RawData    string   `json:"raw"`
+	JointNames []string `json:"joint_names"`
+}
+
+type JointScoreResponse struct {
+	JointName     string `json:"joint"`
+	RatingenScore int    `json:"score"`
 }
 
 func failOn(err error) {
@@ -161,7 +189,7 @@ func gatherBodyParts(deliveries <-chan amqp.Delivery, requestChannels map[string
 	}
 }
 
-func gatherJoints(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
+func gatherScores(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
 	for {
 		select {
 		case delivery := <-deliveries:
