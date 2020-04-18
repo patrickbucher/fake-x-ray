@@ -34,6 +34,14 @@ Which should yield the following result:
 
 ## How To
 
+### Docker
+
+Using Docker Compose:
+
+```bash
+$ docker-compose up --build
+```
+
 ### Setup
 
 On Arch Linux:
