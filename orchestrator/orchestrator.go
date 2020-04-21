@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/patrickbucher/fake-x-ray/orchestrator/orchestrator"
+	"github.com/patrickbucher/fake-x-ray/orchestrator/communication"
 	"github.com/patrickbucher/fake-x-ray/orchestrator/queue"
 	"github.com/streadway/amqp"
 )
@@ -65,10 +65,10 @@ func main() {
 	scoreDeliveryChannel, err := amqpChannel.Consume("scores", "", true, false, false, false, nil)
 	failOn(err)
 
-	registrations := make(chan orchestrator.ChannelRegistration)
+	registrations := make(chan communication.ChannelRegistration)
 	deregistrations := make(chan string)
 
-	go orchestrator.HandleDeliveries(registrations, deregistrations, bodyPartDeliveryChannel, scoreDeliveryChannel)
+	go communication.HandleDeliveries(registrations, deregistrations, bodyPartDeliveryChannel, scoreDeliveryChannel)
 
 	http.HandleFunc("/score", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("/score was called")
@@ -87,7 +87,7 @@ func main() {
 		failOn(err)
 
 		ch := make(chan string, 0)
-		registrations <- orchestrator.ChannelRegistration{
+		registrations <- communication.ChannelRegistration{
 			CorrelationID:  corrId.String(),
 			RequestChannel: ch,
 		}
@@ -97,7 +97,7 @@ func main() {
 
 		result := <-ch
 
-		joints, ok := orchestrator.BodyPartJoints[result]
+		joints, ok := communication.BodyPartJoints[result]
 
 		if !ok {
 			w.Write([]byte("payload does not denote a known body part\n"))
@@ -105,7 +105,7 @@ func main() {
 		}
 
 		for _, joint := range joints {
-			jointDetectionRequest := orchestrator.JointDetectionRequest{
+			jointDetectionRequest := communication.JointDetectionRequest{
 				RawData:    payload.String(),
 				JointNames: []string{joint},
 			}
@@ -125,7 +125,7 @@ func main() {
 		scores := make(map[string]int, 0)
 		for i := 0; i < len(joints); i++ {
 			scoredJoint := <-ch
-			var jointScoreResponse orchestrator.JointScoreResponse
+			var jointScoreResponse communication.JointScoreResponse
 			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)
 			failOn(err)
 

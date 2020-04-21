@@ -1,4 +1,4 @@
-package orchestrator
+package communication
 
 import "github.com/streadway/amqp"
 
