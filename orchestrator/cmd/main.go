@@ -31,6 +31,46 @@ var bodyPartJoints = map[string][]string{
 	},
 }
 
+type JointDetectionRequest struct {
+	RawData    string   `json:"raw"`
+	JointNames []string `json:"joint_names"`
+}
+
+type JointScoreResponse struct {
+	JointName     string `json:"joint"`
+	RatingenScore int    `json:"score"`
+}
+
+type ChannelRegistration struct {
+	CorrelationID  string
+	RequestChannel chan string
+}
+
+func handleDeliveries(registrations chan ChannelRegistration, deregistrations chan string,
+	bodyPartDeliveryChannel, scoreDeliveryChannel <-chan amqp.Delivery) {
+	requestChannels := make(map[string]chan string, 0)
+	for {
+		select {
+		case reg := <-registrations:
+			requestChannels[reg.CorrelationID] = reg.RequestChannel
+		case corrID := <-deregistrations:
+			if ch, ok := requestChannels[corrID]; ok {
+				close(ch)
+				delete(requestChannels, corrID)
+			}
+		case delivery := <-bodyPartDeliveryChannel:
+			if requestChannel, ok := requestChannels[delivery.CorrelationId]; ok {
+				requestChannel <- string(delivery.Body)
+			}
+		case delivery := <-scoreDeliveryChannel:
+			if requestChannel, ok := requestChannels[delivery.CorrelationId]; ok {
+				requestChannel <- string(delivery.Body)
+			}
+
+		}
+	}
+}
+
 func main() {
 	amqpURI, httpURI := mustProvideEnvVars()
 	conn := mustConnect(amqpURI, maxRetries, retryAfter)
@@ -60,12 +100,10 @@ func main() {
 	scoreDeliveryChannel, err := amqpChannel.Consume("scores", "", true, false, false, false, nil)
 	failOn(err)
 
-	semaphore := make(chan struct{}, 1)
-	requestChannels := make(map[string]chan string, 0)
+	registrations := make(chan ChannelRegistration)
+	deregistrations := make(chan string)
 
-	// TODO: consider using a single func selecting from all the given channels
-	go gatherBodyParts(bodyPartDeliveryChannel, requestChannels)
-	go gatherScores(scoreDeliveryChannel, requestChannels)
+	go handleDeliveries(registrations, deregistrations, bodyPartDeliveryChannel, scoreDeliveryChannel)
 
 	http.HandleFunc("/score", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("/score was called")
@@ -84,18 +122,12 @@ func main() {
 		failOn(err)
 
 		ch := make(chan string, 0)
-		semaphore <- struct{}{}
-		requestChannels[corrId.String()] = ch
-		<-semaphore
-
+		registrations <- ChannelRegistration{
+			CorrelationID:  corrId.String(),
+			RequestChannel: ch,
+		}
 		defer func() {
-			semaphore <- struct{}{}
-			channel, ok := requestChannels[corrId.String()]
-			if ok {
-				close(channel)
-				delete(requestChannels, corrId.String())
-			}
-			<-semaphore
+			deregistrations <- corrId.String()
 		}()
 
 		result := <-ch
@@ -150,16 +182,6 @@ func main() {
 	http.ListenAndServe(httpURI, nil)
 }
 
-type JointDetectionRequest struct {
-	RawData    string   `json:"raw"`
-	JointNames []string `json:"joint_names"`
-}
-
-type JointScoreResponse struct {
-	JointName     string `json:"joint"`
-	RatingenScore int    `json:"score"`
-}
-
 func failOn(err error) {
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -198,30 +220,4 @@ func mustConnect(amqpURI string, maxRetries int, retryAfter time.Duration) *amqp
 		log.Fatalf("unable to connect to '%s' after %d retries", amqpURI, maxRetries)
 	}
 	return conn
-}
-
-func gatherBodyParts(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
-	for {
-		select {
-		case delivery := <-deliveries:
-			requestChannel, ok := requestChannels[delivery.CorrelationId]
-			if !ok {
-				log.Fatalf("unable to find request channel with correlation ID %s", delivery.CorrelationId)
-			}
-			requestChannel <- string(delivery.Body)
-		}
-	}
-}
-
-func gatherScores(deliveries <-chan amqp.Delivery, requestChannels map[string]chan string) {
-	for {
-		select {
-		case delivery := <-deliveries:
-			requestChannel, ok := requestChannels[delivery.CorrelationId]
-			if !ok {
-				log.Fatalf("unable to find request channel with correlation ID %s", delivery.CorrelationId)
-			}
-			requestChannel <- string(delivery.Body)
-		}
-	}
 }
