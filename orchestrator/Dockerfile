@@ -1,7 +1,7 @@
 FROM golang:1.14.2-buster AS builder
 LABEL maintainer="Patrick Bucher <patrick.bucher@stud.hslu.ch>"
 #RUN apt-get update && apt-get install -y git ca-certificates
-COPY cmd/main.go go.mod go.sum /src/
+COPY cmd/main.go orchestrator/*.go queue/*.go go.mod go.sum /src/
 WORKDIR /src
 RUN go mod tidy
 RUN go build -o /app/orchestrator

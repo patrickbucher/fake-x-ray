@@ -10,70 +10,35 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/patrickbucher/fake-x-ray/orchestrator/orchestrator"
+	"github.com/patrickbucher/fake-x-ray/orchestrator/queue"
 	"github.com/streadway/amqp"
 )
 
 const maxRetries = 10
 const retryAfter = 2 * time.Second
 
-var bodyPartJoints = map[string][]string{
-	"HAND_LEFT": []string{
-		"mcp1",
-		"mcp2",
-		"mcp3",
-		"mcp4",
-		"mcp5",
-		"pip1",
-		"pip2",
-		"pip3",
-		"pip4",
-		"pip5",
-	},
+func mustProvideEnvVars() (amqpURI, httpURI string) {
+	amqpURI = os.Getenv("AMQP_URI")
+	if amqpURI == "" {
+		log.Fatalf("environment variable AMQP_URI not set")
+	}
+	httpURI = os.Getenv("HTTP_URI")
+	if httpURI == "" {
+		log.Fatalf("environment variable HTTP_URI not set")
+	}
+	return amqpURI, httpURI
 }
 
-type JointDetectionRequest struct {
-	RawData    string   `json:"raw"`
-	JointNames []string `json:"joint_names"`
-}
-
-type JointScoreResponse struct {
-	JointName     string `json:"joint"`
-	RatingenScore int    `json:"score"`
-}
-
-type ChannelRegistration struct {
-	CorrelationID  string
-	RequestChannel chan string
-}
-
-func handleDeliveries(registrations chan ChannelRegistration, deregistrations chan string,
-	bodyPartDeliveryChannel, scoreDeliveryChannel <-chan amqp.Delivery) {
-	requestChannels := make(map[string]chan string, 0)
-	for {
-		select {
-		case reg := <-registrations:
-			requestChannels[reg.CorrelationID] = reg.RequestChannel
-		case corrID := <-deregistrations:
-			if ch, ok := requestChannels[corrID]; ok {
-				close(ch)
-				delete(requestChannels, corrID)
-			}
-		case delivery := <-bodyPartDeliveryChannel:
-			if requestChannel, ok := requestChannels[delivery.CorrelationId]; ok {
-				requestChannel <- string(delivery.Body)
-			}
-		case delivery := <-scoreDeliveryChannel:
-			if requestChannel, ok := requestChannels[delivery.CorrelationId]; ok {
-				requestChannel <- string(delivery.Body)
-			}
-
-		}
+func failOn(err error) {
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 }
 
 func main() {
 	amqpURI, httpURI := mustProvideEnvVars()
-	conn := mustConnect(amqpURI, maxRetries, retryAfter)
+	conn := queue.MustConnect(amqpURI, maxRetries, retryAfter)
 	defer conn.Close()
 
 	amqpChannel, err := conn.Channel()
@@ -100,10 +65,10 @@ func main() {
 	scoreDeliveryChannel, err := amqpChannel.Consume("scores", "", true, false, false, false, nil)
 	failOn(err)
 
-	registrations := make(chan ChannelRegistration)
+	registrations := make(chan orchestrator.ChannelRegistration)
 	deregistrations := make(chan string)
 
-	go handleDeliveries(registrations, deregistrations, bodyPartDeliveryChannel, scoreDeliveryChannel)
+	go orchestrator.HandleDeliveries(registrations, deregistrations, bodyPartDeliveryChannel, scoreDeliveryChannel)
 
 	http.HandleFunc("/score", func(w http.ResponseWriter, r *http.Request) {
 		log.Println("/score was called")
@@ -122,7 +87,7 @@ func main() {
 		failOn(err)
 
 		ch := make(chan string, 0)
-		registrations <- ChannelRegistration{
+		registrations <- orchestrator.ChannelRegistration{
 			CorrelationID:  corrId.String(),
 			RequestChannel: ch,
 		}
@@ -132,7 +97,7 @@ func main() {
 
 		result := <-ch
 
-		joints, ok := bodyPartJoints[result]
+		joints, ok := orchestrator.BodyPartJoints[result]
 
 		if !ok {
 			w.Write([]byte("payload does not denote a known body part\n"))
@@ -140,7 +105,7 @@ func main() {
 		}
 
 		for _, joint := range joints {
-			jointDetectionRequest := JointDetectionRequest{
+			jointDetectionRequest := orchestrator.JointDetectionRequest{
 				RawData:    payload.String(),
 				JointNames: []string{joint},
 			}
@@ -160,7 +125,7 @@ func main() {
 		scores := make(map[string]int, 0)
 		for i := 0; i < len(joints); i++ {
 			scoredJoint := <-ch
-			var jointScoreResponse JointScoreResponse
+			var jointScoreResponse orchestrator.JointScoreResponse
 			err = json.Unmarshal([]byte(scoredJoint), &jointScoreResponse)
 			failOn(err)
 
@@ -180,44 +145,4 @@ func main() {
 	})
 
 	http.ListenAndServe(httpURI, nil)
-}
-
-func failOn(err error) {
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-}
-
-func mustProvideEnvVars() (amqpURI, httpURI string) {
-	amqpURI = os.Getenv("AMQP_URI")
-	if amqpURI == "" {
-		log.Fatalf("environment variable AMQP_URI not set")
-	}
-	httpURI = os.Getenv("HTTP_URI")
-	if httpURI == "" {
-		log.Fatalf("environment variable HTTP_URI not set")
-	}
-	return amqpURI, httpURI
-}
-
-func mustConnect(amqpURI string, maxRetries int, retryAfter time.Duration) *amqp.Connection {
-	connected := false
-	retries := 0
-	var conn *amqp.Connection
-	var err error
-	for !connected && retries < maxRetries {
-		conn, err = amqp.Dial(amqpURI)
-		retries++
-		if err != nil {
-			log.Printf("unable to connect to RabbitMQ on '%s', waiting...", amqpURI)
-			time.Sleep(retryAfter)
-			continue
-		} else {
-			connected = true
-		}
-	}
-	if !connected {
-		log.Fatalf("unable to connect to '%s' after %d retries", amqpURI, maxRetries)
-	}
-	return conn
 }
